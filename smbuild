@@ -1,0 +1,8 @@
+Plugin(source='scripting/ssj.sp')
+
+Package(name='ssj',
+        plugins=['ssj'],
+        filegroups={
+            '.': ['README.md', 'LICENSE'],
+        },
+)
