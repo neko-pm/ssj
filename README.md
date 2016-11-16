@@ -1,3 +1,4 @@
+[![Build status](https://travis-ci.org/dominovr/ssj.svg?branch=master)](https://travis-ci.org/dominovr/ssj)
 # SSJ: Advanced (fix)
 Fixed version of SSJ: Advanced by alkatrazbhop for CSGO. This was done by replacing the PrintColorText() function with multicolours' CPrintToChat().
 
