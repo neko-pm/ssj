@@ -15,7 +15,7 @@ public Plugin myinfo =
 	author = "AlkATraZ | modified by domino_",
 	description = "modified ssj plugin",
 	version = "1.4.2",
-	url = "https://github.com/dominovr/ssj/"
+	url = "https://github.com/neko-pm/ssj"
 };
 
 #define BHOP_TIME 15
