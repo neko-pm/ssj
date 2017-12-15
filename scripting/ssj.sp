@@ -5,11 +5,10 @@
 
 public Plugin:myinfo = 
 {
-	name = "SSJ: Advanced (fix)",
+	name = "SSJ: Advanced",
 	author = "AlkATraZ",
-	description = "Jump stats plugin",
-	version = "1.1",
-	url = "https://github.com/dominovr/ssj/"
+	description = "",
+	version = "1.4.1",
 }
 
 #define BHOP_TIME 15
@@ -20,26 +19,34 @@ new String:g_msg_var[64];
 
 new Handle:hMsgStart, Handle:hMsgText, Handle:hMsgVar;
 
-new Handle:g_hAirAccel;
-
 new Handle:g_hCookieEnabled;
-new Handle:g_hCookieEveryJump;
+new Handle:g_hCookieUsageMode;
 new Handle:g_hCookieCurrentSpeed;
 new Handle:g_hCookieHeightDiff;
 new Handle:g_hCookieSpeedDiff;
 new Handle:g_hCookieGainStats;
+new Handle:g_hCookieEfficiency;
+new Handle:g_hCookieStrafeSync;
 new Handle:g_hCookieDefaultsSet;
 
+#define USAGE_SIXTH 0
+#define USAGE_EVERY 1
+#define USAGE_EVERY_SIXTH 2
+
+new g_iUsageMode[129];
 new bool:g_bEnabled[129];
-new bool:g_bEveryJump[129];
 new bool:g_bCurrentSpeed[129] = {true, ...};
 new bool:g_bSpeedDiff[129];
 new bool:g_bHeightDiff[129];
 new bool:g_bGainStats[129];
+new bool:g_bEfficiency[129];
+new bool:g_bStrafeSync[129];
 new bool:g_bTouchesWall[129];
 
 new g_iTicksOnGround[129];
+new g_iTouchTicks[129];
 new g_strafeTick[129];
+new g_syncedTick[129];
 new g_iJump[129];
 
 new Float:g_flInitialSpeed[129];
@@ -47,22 +54,27 @@ new Float:g_flInitialHeight[129];
 new Float:g_flOldHeight[129];
 new Float:g_flOldSpeed[129];
 new Float:g_flRawGain[129];
+new Float:g_flTrajectory[129];
+new Float:g_vecTraveledDistance[129][3];
 
 public OnAllPluginsLoaded()
 {
-	hMsgStart = CreateConVar("ssj_msgstart", "{green}[SSJ] {darkblue}- ", "SSJ messages prefix.");
-	hMsgText = CreateConVar("ssj_msgtext", "{lightblue}", "SSJ messages color.");
-	hMsgVar = CreateConVar("ssj_msgvar", "{darkred}", "SSJ variables color.");
-	AutoExecConfig(true, "chat_formats", "ssj");
-	
+	hMsgStart = FindConVar("timer_msgstart");
+	hMsgText = FindConVar("timer_msgtext");
+	hMsgVar = FindConVar("timer_msgvar");
+	if(hMsgStart == INVALID_HANDLE || hMsgText == INVALID_HANDLE || hMsgVar == INVALID_HANDLE)
+	{
+		hMsgStart = CreateConVar("ssj_msgstart", "{green}[SSJ] {darkblue}- ", "SSJ messages prefix.");
+		hMsgText = CreateConVar("ssj_msgtext", "{lightblue}", "SSJ messages color.");
+		hMsgVar = CreateConVar("ssj_msgvar", "{darkred}", "SSJ variables color.");
+		AutoExecConfig(true, "chat_formats", "ssj");
+	}
 	GetConVarString(hMsgStart, g_msg_start, sizeof(g_msg_start));
+	ReplaceString(g_msg_start, sizeof(g_msg_start), "^", "\x07", false);
 	GetConVarString(hMsgText, g_msg_text, sizeof(g_msg_text));
+	ReplaceString(g_msg_text, sizeof(g_msg_text), "^", "\x07", false);
 	GetConVarString(hMsgVar, g_msg_var, sizeof(g_msg_var));
-	
-	HookConVarChange(hMsgStart, OnFormatsChanged);
-	HookConVarChange(hMsgText, OnFormatsChanged);
-	HookConVarChange(hMsgVar, OnFormatsChanged);
-	
+	ReplaceString(g_msg_var, sizeof(g_msg_var), "^", "\x07", false);
 	HookEvent("player_jump", OnPlayerJump);
 }
 
@@ -70,14 +82,14 @@ public OnPluginStart()
 {
 	RegConsoleCmd("sm_ssj", Command_SSJ, "SSJ");
 	
-	g_hAirAccel = FindConVar("sv_airaccelerate");
-	
 	g_hCookieEnabled = RegClientCookie("ssj_enabled", "ssj_enabled", CookieAccess_Public);
-	g_hCookieEveryJump = RegClientCookie("ssj_displaymode", "ssj_displaymode", CookieAccess_Public);
+	g_hCookieUsageMode = RegClientCookie("ssj_displaymode", "ssj_displaymode", CookieAccess_Public);
 	g_hCookieCurrentSpeed = RegClientCookie("ssj_currentspeed", "ssj_currentspeed", CookieAccess_Public);
 	g_hCookieSpeedDiff = RegClientCookie("ssj_speeddiff", "ssj_speeddiff", CookieAccess_Public);
 	g_hCookieHeightDiff = RegClientCookie("ssj_heightdiff", "ssj_heightdiff", CookieAccess_Public);
 	g_hCookieGainStats = RegClientCookie("ssj_gainstats", "ssj_gainstats", CookieAccess_Public);
+	g_hCookieEfficiency = RegClientCookie("ssj_efficiency", "ssj_efficiency", CookieAccess_Public);
+	g_hCookieStrafeSync = RegClientCookie("ssj_strafesync", "ssj_strafesync", CookieAccess_Public);
 	g_hCookieDefaultsSet = RegClientCookie("ssj_defaults", "ssj_defaults", CookieAccess_Public);
 	
 	for(new i = 1; i < MaxClients; i++)
@@ -99,11 +111,13 @@ public OnClientCookiesCached(client)
 	if(StringToInt(strCookie) == 0)
 	{
 		SetCookie(client, g_hCookieEnabled, false);
-		SetCookie(client, g_hCookieEveryJump, false);
+		SetCookie(client, g_hCookieUsageMode, USAGE_SIXTH);
 		SetCookie(client, g_hCookieCurrentSpeed, true);
-		SetCookie(client, g_hCookieSpeedDiff, true);
-		SetCookie(client, g_hCookieHeightDiff, true);
-		SetCookie(client, g_hCookieGainStats, true);
+		SetCookie(client, g_hCookieSpeedDiff, false);
+		SetCookie(client, g_hCookieHeightDiff, false);
+		SetCookie(client, g_hCookieGainStats, false);
+		SetCookie(client, g_hCookieEfficiency, false);
+		SetCookie(client, g_hCookieStrafeSync, false);
 		
 		SetCookie(client, g_hCookieDefaultsSet, true);
 	}
@@ -111,8 +125,8 @@ public OnClientCookiesCached(client)
 	GetClientCookie(client, g_hCookieEnabled, strCookie, sizeof(strCookie));
 	g_bEnabled[client] = bool:StringToInt(strCookie);
 	
-	GetClientCookie(client, g_hCookieEveryJump, strCookie, sizeof(strCookie));
-	g_bEveryJump[client] = bool:StringToInt(strCookie);
+	GetClientCookie(client, g_hCookieUsageMode, strCookie, sizeof(strCookie));
+	g_iUsageMode[client] = StringToInt(strCookie);
 	
 	GetClientCookie(client, g_hCookieCurrentSpeed, strCookie, sizeof(strCookie));
 	g_bCurrentSpeed[client] = bool:StringToInt(strCookie);
@@ -125,26 +139,47 @@ public OnClientCookiesCached(client)
 	
 	GetClientCookie(client, g_hCookieGainStats, strCookie, sizeof(strCookie));
 	g_bGainStats[client] = bool:StringToInt(strCookie);
+	
+	GetClientCookie(client, g_hCookieEfficiency, strCookie, sizeof(strCookie));
+	g_bEfficiency[client] = bool:StringToInt(strCookie);
+	
+	GetClientCookie(client, g_hCookieStrafeSync, strCookie, sizeof(strCookie));
+	g_bStrafeSync[client] = bool:StringToInt(strCookie);
 }
 
 public OnClientPutInServer(client)
 {
 	g_iJump[client] = 0;
 	g_strafeTick[client] = 0;
+	g_syncedTick[client] = 0;
 	g_flRawGain[client] = 0.0;
+	g_flInitialHeight[client] = 0.0;
+	g_flInitialSpeed[client] = 0.0;
+	g_flOldHeight[client] = 0.0;
+	g_flOldSpeed[client] = 0.0;
+	g_flTrajectory[client] = 0.0;
+	g_vecTraveledDistance[client] = NULL_VECTOR;
 	g_iTicksOnGround[client] = 0;
 	SDKHook(client, SDKHook_Touch, onTouch);
 }
 
-public Action:onTouch(client, entity) if(entity == 0) g_bTouchesWall[client] = true;
+public Action:onTouch(client, entity)
+{
+	if(!(GetEntProp(entity, Prop_Data, "m_usSolidFlags") & 12))	g_bTouchesWall[client] = true;
+}
 
 public OnPlayerJump(Handle:event, const String:name[], bool:dontBroadcast)
 {
+	
 	new userid = GetEventInt(event, "userid"); 
 
 	new client = GetClientOfUserId(userid); 
 	
 	if(IsFakeClient(client)) return;
+	
+	if(g_iJump[client] && g_strafeTick[client] <= 0) return;
+	
+	
 	
 	g_iJump[client]++;
 	new Float:velocity[3];
@@ -152,23 +187,31 @@ public OnPlayerJump(Handle:event, const String:name[], bool:dontBroadcast)
 	GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", velocity);
 	GetClientAbsOrigin(client, origin);
 	velocity[2] = 0.0;
+	
 	for(new i=1; i<MaxClients;i++)
 	{
-		if(IsClientInGame(i) && ((!IsPlayerAlive(i) && GetEntPropEnt(i, Prop_Data, "m_hObserverTarget") == client && GetEntProp(i, Prop_Data, "m_iObserverMode") != 7 && g_bEnabled[i]) || ((i == client && g_bEnabled[i] && ((g_iJump[i] == 6 && !g_bEveryJump[i]) || g_bEveryJump[i])))))
-			PrintSSJStats(i, client);
+		if(IsClientInGame(i) && ((!IsPlayerAlive(i) && GetEntPropEnt(i, Prop_Data, "m_hObserverTarget") == client && GetEntProp(i, Prop_Data, "m_iObserverMode") != 7 && g_bEnabled[i]) || ((i == client && g_bEnabled[i] && ((g_iJump[i] == 6 && g_iUsageMode[i] == USAGE_SIXTH) || g_iUsageMode[i] == USAGE_EVERY || (g_iUsageMode[i] == USAGE_EVERY_SIXTH && !(g_iJump[i] % 6)))))))
+			SSJ_PrintStats(i, client);
 	}
-	if((g_iJump[client] == 6 && !g_bEveryJump[client]) || g_bEveryJump[client])
+	if((g_iJump[client] >= 6 && g_iUsageMode[client] == USAGE_SIXTH) || g_iUsageMode[client] == USAGE_EVERY || (!(g_iJump[client] % 6)) && g_iUsageMode[client] == USAGE_EVERY_SIXTH)
 	{
 		g_flRawGain[client] = 0.0;
 		g_strafeTick[client] = 0;
-		g_flOldSpeed[client] = GetVectorLength(velocity);
+		g_syncedTick[client] = 0;
 		g_flOldHeight[client] = origin[2];
+		g_flOldSpeed[client] = GetVectorLength(velocity);
+		g_flTrajectory[client] = 0.0;
+		g_vecTraveledDistance[client] = NULL_VECTOR;
 	}
-	if(g_iJump[client] == 1 && !g_bEveryJump[client])
+	
+	if((g_iJump[client] == 1 && g_iUsageMode[client] == USAGE_SIXTH) || (g_iJump[client] % 6 == 1 && g_iUsageMode[client] == USAGE_EVERY_SIXTH))
 	{
 		g_flInitialHeight[client] = origin[2];
 		g_flInitialSpeed[client] = GetVectorLength(velocity);
+		g_vecTraveledDistance[client] = NULL_VECTOR;
 	}
+	
+	
 }
 
 public Action:Command_SSJ(client, args)
@@ -191,9 +234,7 @@ public ShowSSJMenu(client)
 		AddMenuItem(menu, "usage", "Usage: [ON]");
 	else AddMenuItem(menu, "usage", "Usage: [OFF]");
 	
-	if(g_bEveryJump[client])
-		AddMenuItem(menu, "mode", "Usage mode: [Every]");
-	else AddMenuItem(menu, "mode", "Usage mode: [6th]");
+	AddMenuItem(menu, "mode", g_iUsageMode[client] == USAGE_SIXTH ? "Usage mode: [6th]" : (g_iUsageMode[client] == USAGE_EVERY ? "Usage mode: [Every]" : "Usage mode: [Every 6th]"));
 	
 	if(g_bCurrentSpeed[client])
 		AddMenuItem(menu, "curspeed", "Current speed: [ON]");
@@ -211,6 +252,14 @@ public ShowSSJMenu(client)
 		AddMenuItem(menu, "gain", "Gain percentage: [ON]");
 	else AddMenuItem(menu, "gain", "Gain percentage: [OFF]");
 	
+	if(g_bEfficiency[client])
+		AddMenuItem(menu, "efficiency", "Strafe efficiency: [ON]");
+	else AddMenuItem(menu, "efficiency", "Strafe efficiency: [OFF]");
+	
+	if(g_bStrafeSync[client])
+		AddMenuItem(menu, "sync", "Synchronization: [ON]");
+	else AddMenuItem(menu, "sync", "Synchronization: [OFF]");
+	
 	DisplayMenu(menu, client, 0);
 }
 
@@ -227,8 +276,8 @@ public SSJ_Select(Handle:menu, MenuAction:action, client, option)
 		}
 		if(StrEqual(info, "mode"))
 		{
-			g_bEveryJump[client] = !g_bEveryJump[client];
-			SetCookie(client, g_hCookieEveryJump, g_bEveryJump[client]);
+			g_iUsageMode[client] = (g_iUsageMode[client] + 1) % 3;
+			SetCookie(client, g_hCookieUsageMode, g_iUsageMode[client]);
 		}
 		if(StrEqual(info, "curspeed"))
 		{
@@ -250,29 +299,71 @@ public SSJ_Select(Handle:menu, MenuAction:action, client, option)
 			g_bGainStats[client] = !g_bGainStats[client];
 			SetCookie(client, g_hCookieGainStats, g_bGainStats[client]);
 		}
+		if(StrEqual(info, "efficiency"))
+		{
+			g_bEfficiency[client] = !g_bEfficiency[client];
+			SetCookie(client, g_hCookieEfficiency, g_bEfficiency[client]);
+		}
+		if(StrEqual(info, "sync"))
+		{
+			g_bStrafeSync[client] = !g_bStrafeSync[client];
+			SetCookie(client, g_hCookieStrafeSync, g_bStrafeSync[client]);
+		}
 		ShowSSJMenu(client);
 	}
 	else if(action == MenuAction_End)
 		CloseHandle(menu);
 }
 
-public OnFormatsChanged(Handle:cvar, const String:oldValue[], const String:newValue[])
+void SSJ_GetStats(int client, float vel[3], float angles[3])
 {
-	if(cvar == hMsgStart)
+	float velocity[3];
+	GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", velocity);
+	
+	float gaincoeff;
+	g_strafeTick[client]++;
+	
+	g_vecTraveledDistance[client][0] += velocity[0] *  GetTickInterval() * GetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue");
+	g_vecTraveledDistance[client][1] += velocity[1] *  GetTickInterval() * GetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue");
+	velocity[2] = 0.0;
+	g_flTrajectory[client] += GetVectorLength(velocity) * GetTickInterval() * GetEntPropFloat(client, Prop_Data, "m_flLaggedMovementValue");
+	
+	float fore[3], side[3], wishvel[3], wishdir[3];
+	float wishspeed, wishspd, currentgain;
+	
+	GetAngleVectors(angles, fore, side, NULL_VECTOR);
+	
+	fore[2] = 0.0;
+	side[2] = 0.0;
+	NormalizeVector(fore, fore);
+	NormalizeVector(side, side);
+	
+	for(int i = 0; i < 2; i++)
+		wishvel[i] = fore[i] * vel[0] + side[i] * vel[1];
+	
+	wishspeed = NormalizeVector(wishvel, wishdir);
+	if(wishspeed > GetEntPropFloat(client, Prop_Send, "m_flMaxspeed") && GetEntPropFloat(client, Prop_Send, "m_flMaxspeed") != 0.0) wishspeed = GetEntPropFloat(client, Prop_Send, "m_flMaxspeed");
+	
+	if(wishspeed)
 	{
-		GetConVarString(hMsgStart, g_msg_start, sizeof(g_msg_start));
-	}
-	if(cvar == hMsgText)
-	{
-		GetConVarString(hMsgText, g_msg_text, sizeof(g_msg_text));
-	}
-	if(cvar == hMsgVar)
-	{
-		GetConVarString(hMsgVar, g_msg_var, sizeof(g_msg_var));
+		wishspd = (wishspeed > 30.0) ? 30.0 : wishspeed;
+		
+		currentgain = GetVectorDotProduct(velocity, wishdir);
+		if(currentgain < 30.0)
+		{
+			g_syncedTick[client]++;
+			gaincoeff = (wishspd - FloatAbs(currentgain)) / wishspd;
+		}
+		if(g_bTouchesWall[client] && g_iTouchTicks[client] && gaincoeff > 0.5)
+		{
+			gaincoeff -= 1;
+			gaincoeff = FloatAbs(gaincoeff);
+		}
+		g_flRawGain[client] += gaincoeff;
 	}
 }
 
-public Action:OnPlayerRunCmd(client, &buttons, &impulse, Float:vel[3], Float:angles[3], &weapon)
+public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3], float angles[3], int &weapon)
 {
 	if(IsFakeClient(client)) return Plugin_Continue;
 	
@@ -282,80 +373,58 @@ public Action:OnPlayerRunCmd(client, &buttons, &impulse, Float:vel[3], Float:ang
 		{
 			g_iJump[client] = 0;
 			g_strafeTick[client] = 0;
+			g_syncedTick[client] = 0;
 			g_flRawGain[client] = 0.0;
+			g_flTrajectory[client] = 0.0;
+			g_vecTraveledDistance[client] = NULL_VECTOR;
 		}
 		g_iTicksOnGround[client]++;
+		if(buttons & IN_JUMP && g_iTicksOnGround[client] == 1)
+		{
+			SSJ_GetStats(client, vel, angles);
+			g_iTicksOnGround[client] = 0;
+		}
 	}
 	else
 	{
 		if(GetEntityMoveType(client) != MOVETYPE_NONE && GetEntityMoveType(client) != MOVETYPE_NOCLIP && GetEntityMoveType(client) != MOVETYPE_LADDER && GetEntProp(client, Prop_Data, "m_nWaterLevel") < 2)
 		{
-			new Float:gaincoeff;
-			g_strafeTick[client]++;
-			if(g_strafeTick[client] == 1000)
-			{
-				g_flRawGain[client] *= 998.0/999.0;
-				g_strafeTick[client]--;
-			}
-			
-			if(GetConVarFloat(g_hAirAccel) > 0.0)
-			{
-			
-				new Float:velocity[3];
-				GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", velocity);
-				
-				new Float:fore[3], Float:side[3], Float:wishvel[3], Float:wishdir[3];
-				new Float:wishspeed, Float:wishspd, Float:currentgain;
-				
-				GetAngleVectors(angles, fore, side, NULL_VECTOR);
-				
-				fore[2] = 0.0;
-				side[2] = 0.0;
-				NormalizeVector(fore, fore);
-				NormalizeVector(side, side);
-				
-				for(new i = 0; i < 2; i++)
-					wishvel[i] = fore[i] * vel[0] + side[i] * vel[1];
-				
-				wishspeed = NormalizeVector(wishvel, wishdir);
-				if(wishspeed > GetEntPropFloat(client, Prop_Send, "m_flMaxspeed")) wishspeed = GetEntPropFloat(client, Prop_Send, "m_flMaxspeed");
-				
-				if(wishspeed)
-				{
-					wishspd = (wishspeed > 30.0) ? 30.0 : wishspeed;
-					
-					currentgain = GetVectorDotProduct(velocity, wishdir);
-					if(currentgain < 30.0)
-						gaincoeff = (wishspd - FloatAbs(currentgain)) / wishspd;
-					if(g_bTouchesWall[client] && gaincoeff > 0.5)
-					{
-						gaincoeff -= 1;
-						gaincoeff = FloatAbs(gaincoeff);
-					}
-					g_flRawGain[client] += gaincoeff;
-				}
-			}
+			SSJ_GetStats(client, vel, angles);
 		}
 		g_iTicksOnGround[client] = 0;
 	}
-	g_bTouchesWall[client] = false;
+	if(g_bTouchesWall[client])
+	{
+		g_iTouchTicks[client]++;
+		g_bTouchesWall[client] = false;
+	}
+	else g_iTouchTicks[client] = 0;
 	return Plugin_Continue;
 }
 
-PrintSSJStats(client, target)
+SSJ_PrintStats(client, target)
 {
-	new Float:velocity[3];
-	new Float:origin[3];
+	float velocity[3], origin[3];
 	GetEntPropVector(target, Prop_Data, "m_vecAbsVelocity", velocity);
 	GetClientAbsOrigin(target, origin);
 	velocity[2] = 0.0;
-	new Float:coeffsum = g_flRawGain[target];
+	
+	float coeffsum = g_flRawGain[target];
 	coeffsum /= g_strafeTick[target];
 	coeffsum *= 100.0;
+	
+	float efficiency, distance;
+	distance = GetVectorLength(g_vecTraveledDistance[target]);
+	if(distance > g_flTrajectory[target]) distance = g_flTrajectory[target];
+	if(distance > 0.0)
+		efficiency = coeffsum * (distance) / g_flTrajectory[target];
+	
 	coeffsum = RoundToFloor(coeffsum * 100.0 + 0.5) / 100.0;
+	efficiency = RoundToFloor(efficiency * 100.0 + 0.5) / 100.0;
+	
 	decl String:SSJText[255];
 	Format(SSJText, sizeof(SSJText), "%s%sJump: %s%i", g_msg_start, g_msg_text, g_msg_var, g_iJump[target]);
-	if(!g_bEveryJump[client] && g_iJump[target] == 6)
+	if((g_iUsageMode[client] == USAGE_SIXTH && g_iJump[target] == 6) || (g_iUsageMode[client] == USAGE_EVERY_SIXTH && !(g_iJump[client] % 6)))
 	{
 		if(g_bCurrentSpeed[client])
 			Format(SSJText, sizeof(SSJText), "%s %s| Speed: %s%i", SSJText, g_msg_text, g_msg_var, RoundToFloor(GetVectorLength(velocity)));
@@ -365,9 +434,13 @@ PrintSSJStats(client, target)
 			Format(SSJText, sizeof(SSJText), "%s %s| Height Δ: %s%i", SSJText, g_msg_text, g_msg_var, RoundToFloor(origin[2]) - RoundToFloor(g_flInitialHeight[target]));
 		if(g_bGainStats[client])
 			Format(SSJText, sizeof(SSJText), "%s %s| Gain: %s%.2f%%", SSJText, g_msg_text, g_msg_var, coeffsum);
+		if(g_bStrafeSync[client])
+			Format(SSJText, sizeof(SSJText), "%s %s| Sync: %s%.2f%%", SSJText, g_msg_text, g_msg_var, 100.0 * g_syncedTick[target] / g_strafeTick[target]);
+		if(g_bEfficiency[client])
+			Format(SSJText, sizeof(SSJText), "%s %s| Efficiency: %s%.2f%%", SSJText, g_msg_text, g_msg_var, efficiency);
 		CPrintToChat(client, SSJText);
 	}
-	else if(g_bEveryJump[client])
+	else if(g_iUsageMode[client] == USAGE_EVERY)
 	{
 		if(g_bCurrentSpeed[client])
 			Format(SSJText, sizeof(SSJText), "%s %s| Speed: %s%i", SSJText, g_msg_text, g_msg_var, RoundToFloor(GetVectorLength(velocity)));
@@ -379,6 +452,10 @@ PrintSSJStats(client, target)
 				Format(SSJText, sizeof(SSJText), "%s %s| Height Δ: %s%i", SSJText, g_msg_text, g_msg_var, RoundToFloor(origin[2]) - RoundToFloor(g_flOldHeight[target]));
 			if(g_bGainStats[client])
 				Format(SSJText, sizeof(SSJText), "%s %s| Gain: %s%.2f%%", SSJText, g_msg_text, g_msg_var, coeffsum);
+			if(g_bStrafeSync[client])
+				Format(SSJText, sizeof(SSJText), "%s %s| Sync: %s%.2f%%", SSJText, g_msg_text, g_msg_var, 100.0 * g_syncedTick[target] / g_strafeTick[target]);
+			if(g_bEfficiency[client])
+				Format(SSJText, sizeof(SSJText), "%s %s| Efficiency: %s%.2f%%", SSJText, g_msg_text, g_msg_var, efficiency);
 		}
 		CPrintToChat(client, SSJText);
 	}
