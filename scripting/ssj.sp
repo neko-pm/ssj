@@ -3,84 +3,102 @@
 #include <clientprefs>
 #include <multicolors>
 
-public Plugin:myinfo = 
+#undef REQUIRE_PLUGIN
+#include <shavit>
+
+#pragma newdecls required
+#pragma semicolon 1
+
+public Plugin myinfo = 
 {
 	name = "SSJ: Advanced",
-	author = "AlkATraZ",
-	description = "",
-	version = "1.4.1",
-}
+	author = "AlkATraZ | modified by domino_",
+	description = "modified ssj plugin",
+	version = "1.4.2",
+	url = "https://github.com/dominovr/ssj/"
+};
 
 #define BHOP_TIME 15
 
-new String:g_msg_start[64];
-new String:g_msg_text[64];
-new String:g_msg_var[64];
+char g_msg_start[64];
+char g_msg_text[64];
+char g_msg_var[64];
 
-new Handle:hMsgStart, Handle:hMsgText, Handle:hMsgVar;
+ConVar hMsgStart, hMsgText, hMsgVar;
 
-new Handle:g_hCookieEnabled;
-new Handle:g_hCookieUsageMode;
-new Handle:g_hCookieCurrentSpeed;
-new Handle:g_hCookieHeightDiff;
-new Handle:g_hCookieSpeedDiff;
-new Handle:g_hCookieGainStats;
-new Handle:g_hCookieEfficiency;
-new Handle:g_hCookieStrafeSync;
-new Handle:g_hCookieDefaultsSet;
+ConVar g_cvResetInStartZone;
+bool g_bShavitTimerLoaded;
+
+Handle g_hCookieEnabled;
+Handle g_hCookieUsageMode;
+Handle g_hCookieCurrentSpeed;
+Handle g_hCookieHeightDiff;
+Handle g_hCookieSpeedDiff;
+Handle g_hCookieGainStats;
+Handle g_hCookieEfficiency;
+Handle g_hCookieStrafeSync;
+Handle g_hCookieDefaultsSet;
 
 #define USAGE_SIXTH 0
 #define USAGE_EVERY 1
 #define USAGE_EVERY_SIXTH 2
 
-new g_iUsageMode[129];
-new bool:g_bEnabled[129];
-new bool:g_bCurrentSpeed[129] = {true, ...};
-new bool:g_bSpeedDiff[129];
-new bool:g_bHeightDiff[129];
-new bool:g_bGainStats[129];
-new bool:g_bEfficiency[129];
-new bool:g_bStrafeSync[129];
-new bool:g_bTouchesWall[129];
+int g_iUsageMode[MAXPLAYERS+1];
+bool g_bEnabled[MAXPLAYERS+1];
+bool g_bCurrentSpeed[MAXPLAYERS+1];
+bool g_bSpeedDiff[MAXPLAYERS+1];
+bool g_bHeightDiff[MAXPLAYERS+1];
+bool g_bGainStats[MAXPLAYERS+1];
+bool g_bEfficiency[MAXPLAYERS+1];
+bool g_bStrafeSync[MAXPLAYERS+1];
+bool g_bTouchesWall[MAXPLAYERS+1];
 
-new g_iTicksOnGround[129];
-new g_iTouchTicks[129];
-new g_strafeTick[129];
-new g_syncedTick[129];
-new g_iJump[129];
+int g_iTicksOnGround[MAXPLAYERS+1];
+int g_iTouchTicks[MAXPLAYERS+1];
+int g_strafeTick[MAXPLAYERS+1];
+int g_syncedTick[MAXPLAYERS+1];
+int g_iJump[MAXPLAYERS+1];
 
-new Float:g_flInitialSpeed[129];
-new Float:g_flInitialHeight[129];
-new Float:g_flOldHeight[129];
-new Float:g_flOldSpeed[129];
-new Float:g_flRawGain[129];
-new Float:g_flTrajectory[129];
-new Float:g_vecTraveledDistance[129][3];
+float g_flInitialSpeed[MAXPLAYERS+1];
+float g_flInitialHeight[MAXPLAYERS+1];
+float g_flOldHeight[MAXPLAYERS+1];
+float g_flOldSpeed[MAXPLAYERS+1];
+float g_flRawGain[MAXPLAYERS+1];
+float g_flTrajectory[MAXPLAYERS+1];
+float g_vecTraveledDistance[MAXPLAYERS+1][3];
 
-public OnAllPluginsLoaded()
+public void OnAllPluginsLoaded()
 {
 	hMsgStart = FindConVar("timer_msgstart");
 	hMsgText = FindConVar("timer_msgtext");
 	hMsgVar = FindConVar("timer_msgvar");
+	
 	if(hMsgStart == INVALID_HANDLE || hMsgText == INVALID_HANDLE || hMsgVar == INVALID_HANDLE)
 	{
-		hMsgStart = CreateConVar("ssj_msgstart", "{green}[SSJ] {darkblue}- ", "SSJ messages prefix.");
+		hMsgStart = CreateConVar("ssj_msgstart", "{green}[SSJ] ", "SSJ messages prefix.");
 		hMsgText = CreateConVar("ssj_msgtext", "{lightblue}", "SSJ messages color.");
 		hMsgVar = CreateConVar("ssj_msgvar", "{darkred}", "SSJ variables color.");
 		AutoExecConfig(true, "chat_formats", "ssj");
 	}
-	GetConVarString(hMsgStart, g_msg_start, sizeof(g_msg_start));
+	
+	hMsgStart.GetString(g_msg_start, sizeof(g_msg_start));
 	ReplaceString(g_msg_start, sizeof(g_msg_start), "^", "\x07", false);
-	GetConVarString(hMsgText, g_msg_text, sizeof(g_msg_text));
+	hMsgText.GetString(g_msg_text, sizeof(g_msg_text));
 	ReplaceString(g_msg_text, sizeof(g_msg_text), "^", "\x07", false);
-	GetConVarString(hMsgVar, g_msg_var, sizeof(g_msg_var));
+	hMsgVar.GetString(g_msg_var, sizeof(g_msg_var));
 	ReplaceString(g_msg_var, sizeof(g_msg_var), "^", "\x07", false);
+	
+	g_bShavitTimerLoaded = LibraryExists("shavit");
+	
 	HookEvent("player_jump", OnPlayerJump);
 }
 
-public OnPluginStart()
+public void OnPluginStart()
 {
 	RegConsoleCmd("sm_ssj", Command_SSJ, "SSJ");
+	
+	g_cvResetInStartZone = CreateConVar("ssj_reset_in_startzone", "1", "Should the ssj reset to first jump in the start zone?", _, true, 0.0, true, 1.0);
+	AutoExecConfig(true, "convars", "ssj");
 	
 	g_hCookieEnabled = RegClientCookie("ssj_enabled", "ssj_enabled", CookieAccess_Public);
 	g_hCookieUsageMode = RegClientCookie("ssj_displaymode", "ssj_displaymode", CookieAccess_Public);
@@ -92,19 +110,31 @@ public OnPluginStart()
 	g_hCookieStrafeSync = RegClientCookie("ssj_strafesync", "ssj_strafesync", CookieAccess_Public);
 	g_hCookieDefaultsSet = RegClientCookie("ssj_defaults", "ssj_defaults", CookieAccess_Public);
 	
-	for(new i = 1; i < MaxClients; i++)
+	for(int i = 1; i <= MaxClients; i++)
 	{
-		if(IsClientInGame(i))
+		if(IsValidClient(i))
 		{
-			OnClientPutInServer(i);
+			OnClientPostAdminCheck(i);
 			OnClientCookiesCached(i);
 		}
 	}
 }
 
-public OnClientCookiesCached(client)
+public void OnLibraryRemoved(const char[] name)
 {
-	decl String:strCookie[8];
+	if(StrEqual(name, "shavit"))
+		g_bShavitTimerLoaded = false;
+}
+ 
+public void OnLibraryAdded(const char[] name)
+{
+	if(StrEqual(name, "shavit"))
+		g_bShavitTimerLoaded = true;
+}
+
+public void OnClientCookiesCached(int client)
+{
+	char strCookie[8];
 	
 	GetClientCookie(client, g_hCookieDefaultsSet, strCookie, sizeof(strCookie));
 	
@@ -115,7 +145,7 @@ public OnClientCookiesCached(client)
 		SetCookie(client, g_hCookieCurrentSpeed, true);
 		SetCookie(client, g_hCookieSpeedDiff, false);
 		SetCookie(client, g_hCookieHeightDiff, false);
-		SetCookie(client, g_hCookieGainStats, false);
+		SetCookie(client, g_hCookieGainStats, true);
 		SetCookie(client, g_hCookieEfficiency, false);
 		SetCookie(client, g_hCookieStrafeSync, false);
 		
@@ -123,31 +153,31 @@ public OnClientCookiesCached(client)
 	}
 	
 	GetClientCookie(client, g_hCookieEnabled, strCookie, sizeof(strCookie));
-	g_bEnabled[client] = bool:StringToInt(strCookie);
+	g_bEnabled[client] = view_as<bool>(StringToInt(strCookie));
 	
 	GetClientCookie(client, g_hCookieUsageMode, strCookie, sizeof(strCookie));
 	g_iUsageMode[client] = StringToInt(strCookie);
 	
 	GetClientCookie(client, g_hCookieCurrentSpeed, strCookie, sizeof(strCookie));
-	g_bCurrentSpeed[client] = bool:StringToInt(strCookie);
+	g_bCurrentSpeed[client] = view_as<bool>(StringToInt(strCookie));
 	
 	GetClientCookie(client, g_hCookieSpeedDiff, strCookie, sizeof(strCookie));
-	g_bSpeedDiff[client] = bool:StringToInt(strCookie);
+	g_bSpeedDiff[client] = view_as<bool>(StringToInt(strCookie));
 	
 	GetClientCookie(client, g_hCookieHeightDiff, strCookie, sizeof(strCookie));
-	g_bHeightDiff[client] = bool:StringToInt(strCookie);
+	g_bHeightDiff[client] = view_as<bool>(StringToInt(strCookie));
 	
 	GetClientCookie(client, g_hCookieGainStats, strCookie, sizeof(strCookie));
-	g_bGainStats[client] = bool:StringToInt(strCookie);
+	g_bGainStats[client] = view_as<bool>(StringToInt(strCookie));
 	
 	GetClientCookie(client, g_hCookieEfficiency, strCookie, sizeof(strCookie));
-	g_bEfficiency[client] = bool:StringToInt(strCookie);
+	g_bEfficiency[client] = view_as<bool>(StringToInt(strCookie));
 	
 	GetClientCookie(client, g_hCookieStrafeSync, strCookie, sizeof(strCookie));
-	g_bStrafeSync[client] = bool:StringToInt(strCookie);
+	g_bStrafeSync[client] = view_as<bool>(StringToInt(strCookie));
 }
 
-public OnClientPutInServer(client)
+public void OnClientPostAdminCheck(int client)
 {
 	g_iJump[client] = 0;
 	g_strafeTick[client] = 0;
@@ -163,32 +193,30 @@ public OnClientPutInServer(client)
 	SDKHook(client, SDKHook_Touch, onTouch);
 }
 
-public Action:onTouch(client, entity)
+public Action onTouch(int client, int entity)
 {
 	if(!(GetEntProp(entity, Prop_Data, "m_usSolidFlags") & 12))	g_bTouchesWall[client] = true;
 }
 
-public OnPlayerJump(Handle:event, const String:name[], bool:dontBroadcast)
+public Action OnPlayerJump(Event event, char[] name, bool dontBroadcast)
 {
 	
-	new userid = GetEventInt(event, "userid"); 
+	int userid = GetEventInt(event, "userid"); 
 
-	new client = GetClientOfUserId(userid); 
+	int client = GetClientOfUserId(userid); 
 	
 	if(IsFakeClient(client)) return;
 	
 	if(g_iJump[client] && g_strafeTick[client] <= 0) return;
 	
-	
-	
 	g_iJump[client]++;
-	new Float:velocity[3];
-	new Float:origin[3];
+	float velocity[3];
+	float origin[3];
 	GetEntPropVector(client, Prop_Data, "m_vecAbsVelocity", velocity);
 	GetClientAbsOrigin(client, origin);
 	velocity[2] = 0.0;
 	
-	for(new i=1; i<MaxClients;i++)
+	for(int i=1; i<MaxClients;i++)
 	{
 		if(IsClientInGame(i) && ((!IsPlayerAlive(i) && GetEntPropEnt(i, Prop_Data, "m_hObserverTarget") == client && GetEntProp(i, Prop_Data, "m_iObserverMode") != 7 && g_bEnabled[i]) || ((i == client && g_bEnabled[i] && ((g_iJump[i] == 6 && g_iUsageMode[i] == USAGE_SIXTH) || g_iUsageMode[i] == USAGE_EVERY || (g_iUsageMode[i] == USAGE_EVERY_SIXTH && !(g_iJump[i] % 6)))))))
 			SSJ_PrintStats(i, client);
@@ -210,11 +238,9 @@ public OnPlayerJump(Handle:event, const String:name[], bool:dontBroadcast)
 		g_flInitialSpeed[client] = GetVectorLength(velocity);
 		g_vecTraveledDistance[client] = NULL_VECTOR;
 	}
-	
-	
 }
 
-public Action:Command_SSJ(client, args)
+public Action Command_SSJ(int client, any args)
 {
 	if(client == 0)
 	{
@@ -225,9 +251,9 @@ public Action:Command_SSJ(client, args)
 	return Plugin_Handled;
 }
 
-public ShowSSJMenu(client)
+void ShowSSJMenu(int client, int position = 0)
 {
-	new Handle:menu = CreateMenu(SSJ_Select);
+	Menu menu = CreateMenu(SSJ_Select);
 	SetMenuTitle(menu, "SSJ Menu\n \n");
 	
 	if(g_bEnabled[client])
@@ -260,14 +286,14 @@ public ShowSSJMenu(client)
 		AddMenuItem(menu, "sync", "Synchronization: [ON]");
 	else AddMenuItem(menu, "sync", "Synchronization: [OFF]");
 	
-	DisplayMenu(menu, client, 0);
+	menu.DisplayAt(client, position, MENU_TIME_FOREVER);
 }
 
-public SSJ_Select(Handle:menu, MenuAction:action, client, option)
+public int SSJ_Select(Menu menu, MenuAction action, int client, int option)
 {
 	if(action == MenuAction_Select)
 	{
-		decl String:info[32];
+		char info[32];
 		GetMenuItem(menu, option, info, sizeof(info));
 		if(StrEqual(info, "usage"))
 		{
@@ -309,10 +335,10 @@ public SSJ_Select(Handle:menu, MenuAction:action, client, option)
 			g_bStrafeSync[client] = !g_bStrafeSync[client];
 			SetCookie(client, g_hCookieStrafeSync, g_bStrafeSync[client]);
 		}
-		ShowSSJMenu(client);
+		ShowSSJMenu(client, GetMenuSelectionPosition());
 	}
 	else if(action == MenuAction_End)
-		CloseHandle(menu);
+		delete menu;
 }
 
 void SSJ_GetStats(int client, float vel[3], float angles[3])
@@ -381,6 +407,19 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 		g_iTicksOnGround[client]++;
 		if(buttons & IN_JUMP && g_iTicksOnGround[client] == 1)
 		{
+			if(g_bShavitTimerLoaded && g_cvResetInStartZone.BoolValue)
+			{
+				if(Shavit_InsideZone(client, Zone_Start))
+				{
+					g_iJump[client] = 0;
+					g_strafeTick[client] = 0;
+					g_syncedTick[client] = 0;
+					g_flRawGain[client] = 0.0;
+					g_flTrajectory[client] = 0.0;
+					g_vecTraveledDistance[client] = NULL_VECTOR;
+				}
+			}
+			
 			SSJ_GetStats(client, vel, angles);
 			g_iTicksOnGround[client] = 0;
 		}
@@ -402,7 +441,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 	return Plugin_Continue;
 }
 
-SSJ_PrintStats(client, target)
+void SSJ_PrintStats(int client, int target)
 {
 	float velocity[3], origin[3];
 	GetEntPropVector(target, Prop_Data, "m_vecAbsVelocity", velocity);
@@ -422,7 +461,7 @@ SSJ_PrintStats(client, target)
 	coeffsum = RoundToFloor(coeffsum * 100.0 + 0.5) / 100.0;
 	efficiency = RoundToFloor(efficiency * 100.0 + 0.5) / 100.0;
 	
-	decl String:SSJText[255];
+	char SSJText[255];
 	Format(SSJText, sizeof(SSJText), "%s%sJump: %s%i", g_msg_start, g_msg_text, g_msg_var, g_iJump[target]);
 	if((g_iUsageMode[client] == USAGE_SIXTH && g_iJump[target] == 6) || (g_iUsageMode[client] == USAGE_EVERY_SIXTH && !(g_iJump[client] % 6)))
 	{
@@ -461,9 +500,9 @@ SSJ_PrintStats(client, target)
 	}
 }
 
-SetCookie(client, Handle:hCookie, n)
+stock void SetCookie(int client, Handle hCookie, int n)
 {
-	decl String:strCookie[64];
+	char strCookie[64];
 	
 	IntToString(n, strCookie, sizeof(strCookie));
 
