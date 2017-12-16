@@ -8,13 +8,15 @@ Modified version of SSJ: Advanced by alkatrazbhop.
 Jump stats plugin intended for use on bhop servers.
 
 ## The features (all except the first are toggleable):
-
+      
       • Count your jumps.
-      • 2 modes: display stats of every jump; display stats only of the sixth jump.
+      • 3 modes: display stats of every jump; display stats only of the sixth jump; display stats of every sixth jump.
       • Display your current speed every time you perform a bunnyhop.
       • Calculate and display the amount of speed gained per jump.
       • Display height difference between surfaces of the current and the previous jump.
       • Calculate and display sufficiency ('gained speed/max possible gain' ratio) of your strafes.
+      • Calculate and display efficiency ('achieved distance/max possible distance' ratio) of your strafes.
+      • Calculate and display synchronization of your movement.
       • Display stats of the player you spectate.
 
 
@@ -33,7 +35,7 @@ Jump stats plugin intended for use on bhop servers.
 
 ## Cvars:
 
-      • ssj_msgstart "{green}[SSJ] {darkblue}- "  – prefix, this precedes the main message;
+      • ssj_msgstart "{green}[SSJ] "              – prefix, this precedes the main message;
       • ssj_msgtext "{lightblue}"                 – main message's color, can also include any text;
       • ssj_msgvar "{darkred}"                    – variables' color, can also include any text;
       
