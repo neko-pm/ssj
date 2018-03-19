@@ -409,7 +409,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 		{
 			if(g_bShavitTimerLoaded && g_cvResetInStartZone.BoolValue)
 			{
-				if(Shavit_InsideZone(client, Zone_Start))
+				if(Shavit_InsideZone(client, Zone_Start, -1))
 				{
 					g_iJump[client] = 0;
 					g_strafeTick[client] = 0;
