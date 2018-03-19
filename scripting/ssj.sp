@@ -409,7 +409,7 @@ public Action OnPlayerRunCmd(int client, int &buttons, int &impulse, float vel[3
 		{
 			if(g_bShavitTimerLoaded && g_cvResetInStartZone.BoolValue)
 			{
-				if(Shavit_InsideZone(client, Zone_Start))
+				if(Shavit_InsideZone(client, Zone_Start, -1))
 				{
 					g_iJump[client] = 0;
 					g_strafeTick[client] = 0;
@@ -461,7 +461,7 @@ void SSJ_PrintStats(int client, int target)
 	coeffsum = RoundToFloor(coeffsum * 100.0 + 0.5) / 100.0;
 	efficiency = RoundToFloor(efficiency * 100.0 + 0.5) / 100.0;
 	
-	char SSJText[255];
+	char SSJText[256];
 	Format(SSJText, sizeof(SSJText), "%s%sJump: %s%i", g_msg_start, g_msg_text, g_msg_var, g_iJump[target]);
 	if((g_iUsageMode[client] == USAGE_SIXTH && g_iJump[target] == 6) || (g_iUsageMode[client] == USAGE_EVERY_SIXTH && !(g_iJump[client] % 6)))
 	{
